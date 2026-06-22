@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:16  # Downloads the official Postgres 16 image
+    container_name: postgres_db
+    restart: always
+    env_file:
+      - ./Database/.env
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - api-network
+
+  pgadmin:
+    image: dpage/pgadmin4  # Downloads the official pgAdmin4 image
+    container_name: pgadmin
+    restart: always
+    env_file:
+      - ./Database/.env
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - api-network
+
+volumes:
+  pgdata:
+
+networks:
+  api-network:
+    driver: bridge
