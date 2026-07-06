@@ -1,9 +1,9 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, Enum, ForeignKey, String
 from sqlalchemy.orm import relationship
-from db.base import Base
+from app.db.base import Base
 
 
 
@@ -30,9 +30,9 @@ class Job(Base):
     source_path = Column(String, nullable=False)
     target_path = Column(String, nullable=True)
     is_seen = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now(timezone.utc), nullable=False)
     updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False
     )
 
     user = relationship("User", back_populates="jobs")
