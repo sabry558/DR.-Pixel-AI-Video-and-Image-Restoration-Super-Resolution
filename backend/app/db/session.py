@@ -1,22 +1,31 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from core.config import settings
-
-# 1. Define your connection string
-def _postgresql_url(url: str) -> str:
-    if url.startswith("postgresql+psycopg2://"):
-        return url
-    if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+psycopg2://", 1)
-    return url
-# 2. Create the Engine
-engine = create_engine(
-    _postgresql_url(settings.database_url),
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    async_sessionmaker,
+    AsyncSession,
 )
 
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+from app.core.config import get_settings
+
+settings = get_settings()
+
+
+def _postgresql_url(url: str) -> str:
+    if url.startswith("postgresql+asyncpg://"):
+        return url
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
+
+engine = create_async_engine(
+    _postgresql_url(settings.database_url),
+    pool_pre_ping=True,
+)
+
+SessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
