@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update, delete, desc
-from models import Job, JobType, JobStatus # Adjust import based on your file structure
+from app.models.database.job import Job, JobType, JobStatus
 
 class AsyncJobRepository:
     def __init__(self, db_session: AsyncSession):

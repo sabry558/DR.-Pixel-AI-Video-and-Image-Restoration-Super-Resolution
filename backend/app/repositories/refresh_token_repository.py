@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select, delete
-from models import RefreshToken
+from sqlalchemy import select, delete
+from app.models.database.refresh_token import RefreshToken
 from datetime import datetime
 
 class AsyncRefreshTokenRepository:
@@ -16,7 +16,7 @@ class AsyncRefreshTokenRepository:
         result = await self.db.execute(stmt)
         return result.scalars().first()
 
-    async def create_token(self, user_id: int, token_string: str, expire_at: datetime):
+    async def create_token(self, user_id: id, token_string: str, expire_at: datetime):
         new_token = RefreshToken(
             user_id=user_id, 
             token=token_string, 
@@ -41,7 +41,6 @@ class AsyncRefreshTokenRepository:
         return False
     
 
-    # Add this to your AsyncRefreshTokenRepository class
     async def delete_all_for_user(self, user_id: int):
         """Deletes all refresh tokens for a specific user (Global Logout)."""
         stmt = delete(RefreshToken).where(RefreshToken.user_id == user_id)
@@ -49,7 +48,6 @@ class AsyncRefreshTokenRepository:
         await self.db.commit()
         return True
     
-    # Add this to your AsyncRefreshTokenRepository class
     async def delete_expired_tokens(self):
         stmt = delete(RefreshToken).where(RefreshToken.expire_at < datetime.utcnow())
         
