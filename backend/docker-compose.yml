@@ -1,10 +1,10 @@
 services:
   postgres:
-    image: postgres:16  # Downloads the official Postgres 16 image
+    image: postgres:16
     container_name: postgres_db
     restart: always
     env_file:
-      - ./.env
+      - ./.env.database
     ports:
       - "5433:5432"
     volumes:
@@ -13,11 +13,11 @@ services:
       - api-network
 
   pgadmin:
-    image: dpage/pgadmin4  # Downloads the official pgAdmin4 image
+    image: dpage/pgadmin4
     container_name: pgadmin
     restart: always
     env_file:
-      - ./.env
+      - ./.env.database
     ports:
       - "5050:80"
     depends_on:
@@ -25,8 +25,23 @@ services:
     networks:
       - api-network
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: always
+    env_file:
+      - ./.env
+    ports:
+      - "5672:5672"     
+      - "15672:15672"   
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - api-network
+
 volumes:
   pgdata:
+  rabbitmq_data:
 
 networks:
   api-network:
