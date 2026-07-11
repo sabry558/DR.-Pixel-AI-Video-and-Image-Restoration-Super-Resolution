@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.repositories.refresh_token_repository import AsyncRefreshTokenRepository
-
+from fastapi import status,HTTPException
 settings = get_settings()
 
 SECRET_KEY = settings.SECRET_KEY
@@ -54,9 +54,9 @@ def verify_token(token: str):
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload.get("sub")
     except JWTError as e:
-        print("JWT VERIFY FAILED:", str(e))
-        print("ARGS:", e.args)
-        return None
+ 
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="token is invalid or expired") 
+
     
 
 async def verify_refresh_token(
