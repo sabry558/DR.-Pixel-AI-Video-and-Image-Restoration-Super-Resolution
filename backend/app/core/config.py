@@ -15,18 +15,23 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+    CELERY_BROKER_URL: str = "amqp://admin:password@localhost:5672//"
+
 
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5433
-
+    BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent  # -> backend/
+    ML_ARTIFACTS_DIR: Path = BASE_DIR / "ml_artifacts"
+    CLASSIFIER_MODEL_PATH: Path = ML_ARTIFACTS_DIR / "best_model.pth"
     SECRET_KEY: str
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_EXPIRE_DAYS: int
-
+    UPLOAD_CHUNK_SIZE: int 
+    STORAGE_DIR:Path
     @computed_field
     @property
     def database_url(self) -> str:
