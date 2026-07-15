@@ -11,13 +11,13 @@ class AsyncJobRepository:
     # 1. CREATE (Triggered by User)
     # ==========================================
 
-    async def create_job(self, user_id: int, job_type: JobType, source_path: str, description: str = None):
+    async def create_job(self, user_id: int, job_type: JobType, source_path: str, original_name: str ):
         """Creates a new job in the PENDING state."""
         new_job = Job(
             user_id=user_id,
             type=job_type,
             source_path=source_path,
-            description=description,
+            original_name=original_name,
             status=JobStatus.PENDING,
             is_seen=False
         )
@@ -83,6 +83,18 @@ class AsyncJobRepository:
         await self.db.execute(stmt)
         await self.db.commit()
         return await self.get_by_id(job_id)
+    
+    async def update_job_status(self, job_id: int, status: JobStatus):
+        """Updates the status of a job."""
+        stmt = (
+            update(Job)
+            .where(Job.id == job_id)
+            .values(status=status)
+            .execution_options(synchronize_session="fetch")
+        )
+        await self.db.execute(stmt)
+        await self.db.commit()
+        return await self.get_by_id(job_id)
 
     async def fail_job(self, job_id: int):
         """Called by your worker if something crashes during processing."""
@@ -113,3 +125,8 @@ class AsyncJobRepository:
         result = await self.db.execute(stmt)
         await self.db.commit()
         return result.rowcount > 0
+    
+
+
+
+    
