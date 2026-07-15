@@ -9,7 +9,7 @@ from app.repositories.job_repository import AsyncJobRepository,JobType
 from app.core.security import verify_token
 from app.core.config import get_settings
 from app.api.dependencies import get_db
-from app.workers.classifier_worker import _report_video
+from backend.app.workers.video_classifier_worker import _report_video
 settings = get_settings()
 chunk_size = settings.UPLOAD_CHUNK_SIZE
 bearer_scheme = HTTPBearer()
