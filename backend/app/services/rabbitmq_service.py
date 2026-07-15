@@ -8,16 +8,17 @@ app = Celery(
     "worker",
     broker=settings.CELERY_BROKER_URL,
     include=[
-        "app.workers.classifier_worker",
-        # add other worker modules here as you create them, e.g.:
-        # "app.workers.restoration_worker",
-        # "app.workers.super_resolution_worker",
+        "app.workers.video_classifier_worker",
+        "app.workers.light_enhancement_worker",
+        "app.workers.video_restoration_worker",
     ],
 )
 
 app.conf.task_queues = (
     Queue("video_classifier"),
     Queue("image_classifier"),
-    Queue("restoration"),
-    Queue("super_resolution"),
+    Queue("video_restoration"),
+    Queue("light_enhacement"),
+    Queue("image_restoration"),
+
 )
