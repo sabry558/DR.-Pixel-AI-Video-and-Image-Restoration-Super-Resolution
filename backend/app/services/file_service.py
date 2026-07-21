@@ -18,9 +18,9 @@ class FileService:
         )
         storage_dir.mkdir(parents=True, exist_ok=True)
         file_extension = Path(file.filename).suffix
-        file_name= f"{uuid.uuid4()}.{file_extension}"
         if file_extension not in allowed:
             raise ValueError("Unsupported video format")
+        file_name = f"{uuid.uuid4()}{file_extension}"
         file_path = storage_dir / file_name
         async with aiofiles.open(file_path, "wb") as out_file:
             while chunk := await file.read(chunk_size):
