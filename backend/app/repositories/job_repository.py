@@ -96,6 +96,7 @@ class AsyncJobRepository:
         await self.db.commit()
         return await self.get_by_id(job_id)
 
+
     async def fail_job(self, job_id: int):
         """Called by your worker if something crashes during processing."""
         stmt = (
