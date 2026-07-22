@@ -27,15 +27,8 @@ DETECTOR_QUEUE_BY_DEFECT = {
 
 @app.task(queue="video_classifier")
 def _report_video(job_id):                
-    _dispatch_defect({
-                    "job_id": job_id,
-                    "start_frame": int(1),
-                    "end_frame": int(15),
-                    "defect_num": 1,
-                    "last_defect_num": 1,
-                    "defect_type": "low_light",
-                })
-    #asyncio.run(_report_video_impl(job_id))
+
+    asyncio.run(_report_video_impl(job_id))
 
 
 
