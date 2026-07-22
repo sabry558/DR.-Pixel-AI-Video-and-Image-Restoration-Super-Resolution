@@ -5,7 +5,7 @@ from app.db.session import SessionLocal
 from app.core.config import get_settings
 import asyncio
 from app.db.session import engine  
-from app.workers.light_enhacement_worker import _route_light_enhacement
+from app.workers.light_enhancement_worker import route_light_enhancement
 from app.workers.video_restoration_worker import _route_video_restoration
 settings = get_settings()
 
@@ -21,12 +21,13 @@ reporter = VideoCorruptionReporter(
 DETECTOR_QUEUE_BY_DEFECT = {
     "blur": "video_restoration",
     "noise": "video_restoration",
-    "low_light": "light_enhacement",
+    "low_light": "light_enhancement",
 }
 
 
 @app.task(queue="video_classifier")
-def _report_video(job_id):
+def _report_video(job_id):                
+
     asyncio.run(_report_video_impl(job_id))
 
 
@@ -35,8 +36,8 @@ def _dispatch_defect(defect_payload):
     defect_type = str(defect_payload["defect_type"]).lower()
     queue_name = DETECTOR_QUEUE_BY_DEFECT.get(defect_type)
 
-    if queue_name == "light_enhacement":
-        return _route_light_enhacement.delay(defect_payload)
+    if queue_name == "light_enhancement":
+        return route_light_enhancement.delay(defect_payload)
 
     if queue_name == "video_restoration":
         return _route_video_restoration.delay(defect_payload)

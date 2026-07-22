@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
+import app.models.database  # noqa: F401
 
 settings = get_settings()
 
