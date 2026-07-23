@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int
     UPLOAD_CHUNK_SIZE: int 
     STORAGE_DIR:Path
+    FAL_API_KEY: str
     @computed_field
     @property
     def database_url(self) -> str:
