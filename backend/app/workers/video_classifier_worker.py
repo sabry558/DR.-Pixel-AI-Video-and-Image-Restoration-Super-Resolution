@@ -6,7 +6,7 @@ from app.core.config import get_settings
 import asyncio
 from app.db.session import engine  
 from app.workers.light_enhancement_worker import route_light_enhancement
-from app.workers.video_restoration_worker import _route_video_restoration
+from app.workers.fal_video_restoration_worker import route_seedvr_fal_enhancement
 settings = get_settings()
 
 reporter = VideoCorruptionReporter(
@@ -27,8 +27,15 @@ DETECTOR_QUEUE_BY_DEFECT = {
 
 @app.task(queue="video_classifier")
 def _report_video(job_id):                
-
-    asyncio.run(_report_video_impl(job_id))
+                _dispatch_defect({
+                    "job_id": job_id,
+                    "start_frame": int(0),
+                    "end_frame": int(30),
+                    "defect_num": 1,
+                    "last_defect_num": 1,
+                    "defect_type": "blur",
+                })
+    #asyncio.run(_report_video_impl(job_id))
 
 
 
@@ -40,7 +47,7 @@ def _dispatch_defect(defect_payload):
         return route_light_enhancement.delay(defect_payload)
 
     if queue_name == "video_restoration":
-        return _route_video_restoration.delay(defect_payload)
+        return route_seedvr_fal_enhancement.delay(defect_payload)
 
     raise ValueError(f"Unsupported defect type: {defect_type}")
 

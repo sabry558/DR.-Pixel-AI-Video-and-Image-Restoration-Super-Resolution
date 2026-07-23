@@ -15,5 +15,6 @@ torchvision==0.27.1
 pillow==12.2.0
 opencv-python==4.13.0.92
 PyYAML==6.0.2
-
+fal-client 
+httpx
 
