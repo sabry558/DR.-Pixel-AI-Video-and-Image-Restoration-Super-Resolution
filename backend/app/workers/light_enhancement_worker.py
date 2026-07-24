@@ -2,7 +2,7 @@
 DarkIR Video Enhancement Worker
 
 Celery worker for video restoration using the DarkIR model.
-Restores a frame segment and merges it back into the original video.
+Restores a frame segment and writes it as a standalone video file.
 """
 
 import asyncio
@@ -23,7 +23,14 @@ from torchvision.transforms import Resize
 from app.services.light_rabbitmq_service import app
 from app.repositories.job_repository import AsyncJobRepository, JobStatus
 from app.workers.workers_schema.restore_schema import RestoreSchema
+from redis import Redis
 
+redis_client = Redis(
+    host="redis",      
+    port=6379,
+    db=0,
+    decode_responses=True,
+)
 
 # =============================================================================
 # DEVICE CONFIGURATION
@@ -388,141 +395,27 @@ class VideoWriter:
 
 
 # =============================================================================
-# VIDEO MERGER — merges restored segment back into original video
-# =============================================================================
-
-class VideoMerger:
-    """
-    Merges a restored frame segment back into the original video.
-
-    Strategy:
-    1. Read original video frames
-    2. For frames in [start, end] range, use restored frames
-    3. For all other frames, use original frames
-    4. Write merged result to a new video file
-    5. Atomically replace original with merged result
-    """
-
-    def __init__(self, video_path: str, start_frame: int, end_frame: int):
-        self.video_path = video_path
-        self.start_frame = start_frame
-        self.end_frame = end_frame
-        self.restored_frames: List[np.ndarray] = []
-
-    def add_restored_frame(self, frame: np.ndarray) -> None:
-        """Collect restored frames in order."""
-        self.restored_frames.append(frame)
-
-    def merge(self, output_path: Optional[Path] = None) -> Path:
-        """
-        Merge restored segment into original video.
-
-        If output_path is None, overwrites the original video atomically.
-        Returns the path to the final merged video.
-        """
-        if output_path is None:
-            # Create a temporary path next to the original
-            original = Path(self.video_path)
-            temp_path = original.with_suffix(".temp.mp4")
-            final_path = original
-        else:
-            temp_path = output_path
-            final_path = output_path
-
-        with VideoReader(self.video_path) as reader:
-            meta = reader.metadata
-
-            with VideoWriter(temp_path, meta) as writer:
-                self._write_merged(reader, writer, meta)
-
-        # If overwriting original, atomically replace
-        if output_path is None:
-            self._atomic_replace(temp_path, final_path)
-
-        return final_path
-
-    def _write_merged(self, reader: VideoReader, writer: VideoWriter, meta: VideoMetadata) -> None:
-        """Write merged frames: restored for segment, original elsewhere."""
-        restored_index = 0
-        total_restored = len(self.restored_frames)
-
-        for frame_idx, frame in enumerate(reader.iter_frames(0, meta.total_frames - 1)):
-            # Check if this frame is in the restored segment
-            if self.start_frame <= frame_idx <= self.end_frame and restored_index < total_restored:
-                writer.write(self.restored_frames[restored_index])
-                restored_index += 1
-            else:
-                writer.write(frame)
-
-        print(f"Merged {restored_index} restored frames into video")
-
-    @staticmethod
-    def _atomic_replace(temp_path: Path, final_path: Path) -> None:
-        """Atomically replace original with merged video."""
-        # On Windows/WSL, shutil.move handles cross-device moves
-        backup_path = final_path.with_suffix(final_path.suffix + ".backup")
-
-        # Backup original (optional, remove if you don't want backups)
-        if final_path.exists():
-            shutil.copy2(str(final_path), str(backup_path))
-
-        # Replace original with merged
-        shutil.move(str(temp_path), str(final_path))
-
-        # Clean up backup if successful
-        if backup_path.exists():
-            backup_path.unlink()
-
-        print(f"Atomically replaced original with merged video: {final_path}")
-
-
-# =============================================================================
-# VIDEO PROCESSING ORCHESTRATION (with merger)
+# VIDEO PROCESSING ORCHESTRATION (writes only restored frames)
 # =============================================================================
 
 class VideoProcessor:
-    """Orchestrates reading, restoring, and merging video frames."""
+    """Orchestrates reading, restoring, and writing video frames."""
 
     def __init__(self, model: torch.nn.Module, config: ProcessingConfig):
         self.restorer = FrameRestorer(model, config)
 
-    def process_and_merge(
+    def process_segment(
         self,
         video_path: str,
         start_frame: int,
         end_frame: int,
-        output_path: Optional[Path] = None,
+        output_path: Path,
     ) -> Path:
         """
-        Restore a frame segment and merge it back into the original video.
+        Restore a frame segment and write ONLY the restored frames to a new video file.
 
-        If output_path is None, overwrites the original video.
-        Returns the path to the final merged video.
+        Returns the path to the output video containing only the restored segment.
         """
-        # Step 1: Restore the segment frames
-        restored_path=build_output_path(video_path)
-        if restored_path.exists():
-            video_path=restored_path
-            
-        
-        restored_frames = self._restore_segment(video_path, start_frame, end_frame)
-
-        # Step 2: Merge restored frames back into original video
-        merger = VideoMerger(video_path, start_frame, end_frame)
-        for frame in restored_frames:
-            merger.add_restored_frame(frame)
-
-        return merger.merge(output_path)
-
-    def _restore_segment(
-        self,
-        video_path: str,
-        start_frame: int,
-        end_frame: int,
-    ) -> List[np.ndarray]:
-        """Restore frames in the segment and return them as a list."""
-        restored_frames: List[np.ndarray] = []
-
         with VideoReader(video_path) as reader:
             meta = reader.metadata
             print(
@@ -530,34 +423,34 @@ class VideoProcessor:
                 f"(frames {start_frame}..{end_frame}, total={meta.total_frames})"
             )
 
-            count = 0
-            for frame in reader.iter_frames(start_frame, end_frame):
-                restored = self.restorer.restore(frame)
-                restored_frames.append(restored)
-                count += 1
+            with VideoWriter(output_path, meta) as writer:
+                count = 0
+                for frame in reader.iter_frames(start_frame, end_frame):
+                    restored = self.restorer.restore(frame)
+                    writer.write(restored)
+                    count += 1
 
-                if count % ProgressInterval.LOG_EVERY_N_FRAMES == 0:
-                    print(f"Restored {count} frames")
+                    if count % ProgressInterval.LOG_EVERY_N_FRAMES == 0:
+                        print(f"Restored {count} frames")
 
-            print(f"Segment restoration complete: {count} frames")
+            print(f"Segment restoration complete: {count} frames written to {output_path}")
 
-        return restored_frames
+        return output_path
 
 
 # =============================================================================
 # OUTPUT PATH & PAYLOAD
 # =============================================================================
 
-def build_output_path(source_path: str, job_id: Optional[int] = None) -> Path:
+def build_output_path(source_path: str, job_id: Optional[int] = None, start_frame: int = 0, end_frame: int = 0) -> Path:
     source = Path(source_path)
 
-    output_dir = source.parent.parent / "restored"
+    output_dir = source.parent.parent / "light_enhanced_videos"
     output_dir.mkdir(parents=True, exist_ok=True)
-
 
     filename = source.name
 
-    return output_dir / filename
+    return output_dir / f"{start_frame}_{end_frame}_{filename}"
 
 
 def normalize_payload(payload) -> RestoreSchema:
@@ -583,7 +476,6 @@ class JobLifecycle:
 
     async def complete(self, output_path: str) -> None:
         await self.repo.complete_job(self.job_id, output_path)
-    
 
     async def fail(self) -> None:
         with suppress(Exception):
@@ -608,7 +500,7 @@ def load_processing_config() -> ProcessingConfig:
 
 async def enhance_video(payload: RestoreSchema) -> None:
     """
-    Main worker: restore segment and merge back into original video.
+    Main worker: restore segment and write only restored frames to disk.
     """
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy.orm import sessionmaker
@@ -629,23 +521,24 @@ async def enhance_video(payload: RestoreSchema) -> None:
             config = load_processing_config()
             model = ModelCache.get_or_load()
 
-            # Build output path (new merged video)
-            output = build_output_path(job.source_path, payload.job_id)
+            # Build output path for the restored segment video
+            output = build_output_path(job.source_path, payload.job_id,payload.start_frame, payload.end_frame)
 
-            print(f"Output (merged video): {output}")
+            print(f"Output (restored segment): {output}")
 
             processor = VideoProcessor(model, config)
-            final_path = processor.process_and_merge(
+            final_path = processor.process_segment(
                 video_path=job.source_path,
                 start_frame=payload.start_frame,
                 end_frame=payload.end_frame,
                 output_path=output,
             )
 
-            print(f"Done: merged video saved to {final_path}")
+            print(f"Done: restored segment saved to {final_path}")
+            redis_client.decr(f"{payload.job_id}")
+            if redis_client.get(f"{payload.job_id}") == "0":
+                redis_client.delete(f"{payload.job_id}")
 
-            if payload.defect_num == payload.last_defect_num:
-                await lifecycle.complete(str(final_path))
 
         except Exception:
             await lifecycle.fail()
