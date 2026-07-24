@@ -17,6 +17,7 @@ changing the public API.
 from .config import ColorSpace, CorrectionConfig, HistogramMethod
 from .corruption_range import CorruptionRange
 from .orchestrator import VideoColorCorrectionPipeline
+from .scene_average_correction import SceneAverageColorCorrector
 
 __all__ = [
     "ColorSpace",
@@ -24,4 +25,5 @@ __all__ = [
     "HistogramMethod",
     "CorruptionRange",
     "VideoColorCorrectionPipeline",
+    "SceneAverageColorCorrector",
 ]

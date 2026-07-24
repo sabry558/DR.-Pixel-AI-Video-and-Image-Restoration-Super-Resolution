@@ -1,0 +1,9 @@
+
+python test_manual.py --original "D:\ITI\Intake46\Graduation Project\video_color_correction\original_video.mp4" --reconstructed "D:\ITI\Intake46\Graduation Project\video_color_correction\reconstructed_video.mp4" --num-frames 10 --output corrected_test_output.mp4
+
+
+python test_manual.py --original "D:\ITI\Intake46\Graduation Project\video_color_correction\original_video.mp4" --reconstructed "D:\ITI\Intake46\Graduation Project\video_color_correction\reconstructed_video.mp4" --no-classifier --output corrected_no_classifier.mp4 --lab-plot lab_no_classifier.png --frames-dir frames_no_classifier
+
+
+
+python test_manual.py --original "D:\ITI\Intake46\Graduation Project\video_color_correction\New folder\1.mp4" --reconstructed "D:\ITI\Intake46\Graduation Project\video_color_correction\New folder\2.mp4" --no-classifier --output corrected_no_classifier.mp4 --lab-plot lab_no_classifier.png --frames-dir frames_no_classifier

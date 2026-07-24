@@ -49,7 +49,9 @@ from video_color_correction import (
     CorrectionConfig,
     HistogramMethod,
     VideoColorCorrectionPipeline,
+    SceneAverageColorCorrector,
 )
+from video_color_correction.scene_detection import build_scene_detector
 
 logger = logging.getLogger("test_manual")
 
@@ -140,6 +142,54 @@ def plot_lab_over_range(
     logger.info("LAB comparison plot saved to: %s", output_path)
 
 
+def plot_lab_whole_video(
+    original_frames: List[np.ndarray],
+    before_frames: List[np.ndarray],
+    after_frames: List[np.ndarray],
+    shot_boundaries: List[int],
+    output_path: str,
+    max_points: int = 300,
+) -> None:
+    """Like plot_lab_over_range, but for the whole-video no-classifier mode:
+    no single highlighted splice range — instead, vertical dashed lines mark
+    detected scene boundaries. Downsamples to at most `max_points` frames so
+    the chart stays readable on long videos.
+    """
+    n = len(original_frames)
+    if n > max_points:
+        indices = sorted(set(np.linspace(0, n - 1, max_points, dtype=int).tolist()))
+    else:
+        indices = list(range(n))
+
+    orig_lab = np.array([lab_means(original_frames[i]) for i in indices])
+    before_lab = np.array([lab_means(before_frames[i]) for i in indices])
+    after_lab = np.array([lab_means(after_frames[i]) for i in indices])
+
+    channel_names = ["L (lightness)", "A (green-red)", "B (blue-yellow)"]
+    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
+
+    for c in range(3):
+        ax = axes[c]
+        ax.plot(indices, orig_lab[:, c], label="original", color="black", linewidth=1.5)
+        ax.plot(indices, before_lab[:, c], label="reconstructed (before fix)", color="red",
+                 linewidth=1, alpha=0.8)
+        ax.plot(indices, after_lab[:, c], label="corrected (after fix)", color="green",
+                 linewidth=1, alpha=0.8)
+        for b in shot_boundaries:
+            ax.axvline(b, color="gray", linestyle=":", linewidth=0.8,
+                        label="scene cut" if (c == 0 and b == shot_boundaries[0]) else None)
+        ax.set_ylabel(channel_names[c])
+        ax.grid(True, alpha=0.3)
+
+    axes[0].legend(loc="upper right", fontsize=8)
+    axes[-1].set_xlabel("frame index")
+    fig.suptitle(f"LAB channel means — whole video, no-classifier mode ({len(shot_boundaries) + 1} scene(s))")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=130)
+    plt.close(fig)
+    logger.info("LAB whole-video comparison plot saved to: %s", output_path)
+
+
 def save_side_by_side_frames(
     original_frames: List[np.ndarray],
     before_frames: List[np.ndarray],
@@ -225,6 +275,21 @@ def main():
     parser.add_argument("--lab-plot", default="lab_comparison.png", help="Where to save the LAB channel comparison chart")
     parser.add_argument("--frames-dir", default="frame_comparisons", help="Directory to save side-by-side comparison images")
     parser.add_argument("--sample-frames", type=int, default=4, help="How many frames from the spliced range to save as side-by-side images")
+    parser.add_argument(
+        "--no-classifier", action="store_true",
+        help="Simulate having NO frame-level classifier output. Instead of splicing "
+             "a known range and correcting only those frames, this treats the ENTIRE "
+             "reconstructed video as needing correction, using the original video's "
+             "per-SCENE average LAB level as the target (mean-shift only, no "
+             "histogram matching, since we don't know which frames actually drifted)."
+    )
+    parser.add_argument(
+        "--scene-threshold", type=float, default=None,
+        help="Scene-cut sensitivity. Meaning depends on --backend: for "
+             "'pyscenedetect' this is a content-difference score (default 27.0, "
+             "lower = more sensitive); for 'histogram_diff' this is a Bhattacharyya "
+             "distance in [0, 1] (default 0.5, lower = more sensitive)."
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -258,6 +323,67 @@ def main():
             for f in reconstructed_frames
         ]
 
+    scene_threshold = args.scene_threshold
+    if scene_threshold is None:
+        scene_threshold = 27.0 if args.backend == "pyscenedetect" else 0.5
+
+    if args.no_classifier:
+        n = min(len(original_frames), len(reconstructed_frames))
+        original_frames = original_frames[:n]
+        reconstructed_frames = reconstructed_frames[:n]
+
+        logger.info(
+            "--no-classifier mode: treating all %d frames as needing correction, "
+            "using the original video's per-scene average LAB level as the target.", n
+        )
+
+        scene_detector = build_scene_detector(
+            backend_name=args.backend,
+            threshold=scene_threshold,
+            color_space=ColorSpace.BGR,
+            assumed_fps=fps,
+        )
+        corrector = SceneAverageColorCorrector(color_space=ColorSpace.BGR, scene_detector=scene_detector)
+        corrected_frames = corrector.correct(
+            reference_frames=original_frames, target_frames=reconstructed_frames
+        )
+
+        # Re-detect shots just to get boundary indices for the plot (cheap
+        # relative to correction; keeps plotting decoupled from the corrector).
+        shots = scene_detector.detect(original_frames, list(range(n)))
+        shot_boundaries = [s.start_frame for s in shots if s.start_frame > 0]
+
+        print("\n=== RESULTS (no-classifier / whole-video mode) ===")
+        print(f"Detected {len(shots)} scene(s), boundaries at frames: {shot_boundaries}")
+
+        write_video(args.output, corrected_frames, fps)
+        print(f"\nCorrected video written to: {args.output}")
+
+        plot_lab_whole_video(
+            original_frames=original_frames,
+            before_frames=reconstructed_frames,
+            after_frames=corrected_frames,
+            shot_boundaries=shot_boundaries,
+            output_path=args.lab_plot,
+        )
+        print(f"LAB comparison chart written to: {args.lab_plot}")
+
+        # One sample frame near the midpoint of each scene (capped, so huge
+        # videos don't dump hundreds of images).
+        sample_indices = []
+        for shot in shots[: args.sample_frames]:
+            mid = (shot.start_frame + shot.end_frame - 1) // 2
+            sample_indices.append(mid)
+        save_side_by_side_frames(
+            original_frames=original_frames,
+            before_frames=reconstructed_frames,
+            after_frames=corrected_frames,
+            frame_indices=sample_indices,
+            output_dir=args.frames_dir,
+        )
+        print(f"Side-by-side comparison images written to: {args.frames_dir}/")
+        return
+
     spliced_frames, start_idx, end_idx = splice_reconstructed_into_original(
         original_frames, reconstructed_frames, args.num_frames, args.seed
     )
@@ -273,6 +399,7 @@ def main():
         color_space=ColorSpace.BGR,  # OpenCV decodes as BGR
         histogram_method=HistogramMethod.MOMENT if args.method == "moment" else HistogramMethod.FULL,
         scene_detector_backend=args.backend,
+        scene_detection_threshold=scene_threshold,
         assumed_fps=fps,
     )
     pipeline = VideoColorCorrectionPipeline(config)
