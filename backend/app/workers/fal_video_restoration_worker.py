@@ -3,10 +3,10 @@ SeedVR2 (via fal.ai) Video Enhancement Worker
 
 Celery worker for video super-resolution/restoration using SeedVR2, hosted
 on fal.ai (model: fal-ai/seedvr/upscale/video). Restores a frame segment
-and merges it back into the original video.
+and writes only the restored frames to a new video file.
 
 Mirrors the architecture of the DarkIR worker (client caching, job
-lifecycle, segment-restore-then-merge), with two deliberate differences
+lifecycle, segment-restore-then-write), with two deliberate differences
 from that worker and from the local-GPU SeedVR2 worker built alongside it:
 
   1. There is no local model to load — "restoration" is a fully async
@@ -19,13 +19,13 @@ from that worker and from the local-GPU SeedVR2 worker built alongside it:
      its own batching/memory management server-side, and chunking here
      would only add upload/download round-trips for no benefit.
 
-IMPORTANT — same resolution caveat as the local-GPU SeedVR2 worker:
+IMPORTANT — resolution caveat:
 SeedVR2 is a super-resolution model, so fal.ai's restored clip will
 usually be at a different resolution than your source segment. This
 worker resizes the restored frames back down/up to the source resolution
-before merging in place, exactly like the local-GPU version. If you want
-the higher-resolution output preserved instead, save the restored segment
-directly rather than merging it back into the original video.
+before writing to the output file. If you want the higher-resolution
+output preserved instead, set `resize_output_to_source=False` in
+SeedVRFalConfig.
 
 Setup:
     pip install fal-client httpx aiofiles
@@ -51,11 +51,16 @@ from app.services.light_rabbitmq_service import app
 from app.repositories.job_repository import AsyncJobRepository, JobStatus
 from app.workers.workers_schema.restore_schema import RestoreSchema
 from app.core.config import get_settings
-
+from redis import Redis
 # =============================================================================
 # PATH CONFIGURATION
 # =============================================================================
-
+redis_client = Redis(
+    host="redis",      
+    port=6379,
+    db=0,
+    decode_responses=True,
+)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
@@ -349,7 +354,7 @@ class SegmentRestorer:
             restored_frames = reader.read_all()
 
         # 6. SeedVR2 upscales, so the output resolution usually != source.
-        #    Resize back to match if we're merging into the original video.
+        #    Resize back to match if configured.
         if self.config.resize_output_to_source:
             restored_frames = [
                 cv.resize(f, (source_meta.width, source_meta.height), interpolation=cv.INTER_LANCZOS4)
@@ -360,98 +365,28 @@ class SegmentRestorer:
 
 
 # =============================================================================
-# VIDEO MERGER — merges restored segment back into original video
-# =============================================================================
-
-class VideoMerger:
-    """
-    Merges a restored frame segment back into the original video.
-
-    Strategy:
-    1. Read original video frames
-    2. For frames in [start, end] range, use restored frames
-    3. For all other frames, use original frames
-    4. Write merged result to a new video file
-    5. Atomically replace original with merged result
-    """
-
-    def __init__(self, video_path: str, start_frame: int, end_frame: int):
-        self.video_path = video_path
-        self.start_frame = start_frame
-        self.end_frame = end_frame
-        self.restored_frames: List[np.ndarray] = []
-
-    def add_restored_frames(self, frames: List[np.ndarray]) -> None:
-        self.restored_frames.extend(frames)
-
-    def merge(self, output_path: Optional[Path] = None) -> Path:
-        if output_path is None:
-            original = Path(self.video_path)
-            temp_path = original.with_suffix(".temp.mp4")
-            final_path = original
-        else:
-            temp_path = output_path
-            final_path = output_path
-
-        with VideoReader(self.video_path) as reader:
-            meta = reader.metadata
-            with VideoWriter(temp_path, meta.fps, meta.width, meta.height) as writer:
-                self._write_merged(reader, writer, meta)
-
-        if output_path is None:
-            self._atomic_replace(temp_path, final_path)
-
-        return final_path
-
-    def _write_merged(self, reader: VideoReader, writer: VideoWriter, meta: VideoMetadata) -> None:
-        restored_index = 0
-        total_restored = len(self.restored_frames)
-
-        for frame_idx, frame in enumerate(reader.iter_frames(0, meta.total_frames - 1)):
-            if self.start_frame <= frame_idx <= self.end_frame and restored_index < total_restored:
-                writer.write(self.restored_frames[restored_index])
-                restored_index += 1
-            else:
-                writer.write(frame)
-
-        print(f"Merged {restored_index} restored frames into video")
-
-    @staticmethod
-    def _atomic_replace(temp_path: Path, final_path: Path) -> None:
-        backup_path = final_path.with_suffix(final_path.suffix + ".backup")
-
-        if final_path.exists():
-            shutil.copy2(str(final_path), str(backup_path))
-
-        shutil.move(str(temp_path), str(final_path))
-
-        if backup_path.exists():
-            backup_path.unlink()
-
-        print(f"Atomically replaced original with merged video: {final_path}")
-
-
-# =============================================================================
-# VIDEO PROCESSING ORCHESTRATION (with merger) — now async end-to-end
+# VIDEO PROCESSING ORCHESTRATION (writes only restored frames)
 # =============================================================================
 
 class VideoProcessor:
-    """Orchestrates reading, restoring (via fal.ai), and merging video frames."""
+    """Orchestrates reading, restoring (via fal.ai), and writing video frames."""
 
     def __init__(self, client: "fal_client.AsyncClient", config: SeedVRFalConfig, work_dir: Path):
         self.restorer = SegmentRestorer(client, config, work_dir)
 
-    async def process_and_merge(
+    async def process_segment(
         self,
         video_path: str,
         start_frame: int,
         end_frame: int,
-        output_path: Optional[Path] = None,
+        output_path: Path,
     ) -> Path:
-        restored_path = build_output_path(video_path)
-        if restored_path.exists():
-            video_path = str(restored_path)
+        """
+        Restore a frame segment via fal.ai and write ONLY the restored
+        frames to a new video file.
 
+        Returns the path to the output video containing only the restored segment.
+        """
         with VideoReader(video_path) as reader:
             source_meta = reader.metadata
 
@@ -459,24 +394,31 @@ class VideoProcessor:
             f"Restoring segment: {video_path} "
             f"(frames {start_frame}..{end_frame}, total={source_meta.total_frames})"
         )
-        restored_frames = await self.restorer.restore(video_path, start_frame, end_frame, source_meta)
+
+        restored_frames = await self.restorer.restore(
+            video_path, start_frame, end_frame, source_meta
+        )
         print(f"Segment restoration complete: {len(restored_frames)} frames")
 
-        merger = VideoMerger(video_path, start_frame, end_frame)
-        merger.add_restored_frames(restored_frames)
+        # Write only the restored frames to the output file
+        with VideoWriter(output_path, source_meta.fps, source_meta.width, source_meta.height) as writer:
+            for frame in restored_frames:
+                writer.write(frame)
 
-        return merger.merge(output_path)
+        print(f"Wrote {len(restored_frames)} restored frames to {output_path}")
+        return output_path
 
 
 # =============================================================================
 # OUTPUT PATH & PAYLOAD
 # =============================================================================
 
-def build_output_path(source_path: str, job_id: Optional[int] = None) -> Path:
+def build_output_path(source_path: str, job_id: Optional[int] = None, start_frame: int = None, end_frame: int = None) -> Path:
     source = Path(source_path)
-    output_dir = source.parent.parent / "restored"
+    output_dir = source.parent.parent / "restored_videos"
     output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir / source.name
+    filename = source.name
+    return output_dir / f"{start_frame}_{end_frame}_{filename}"
 
 
 def normalize_payload(payload) -> RestoreSchema:
@@ -515,7 +457,7 @@ class JobLifecycle:
 async def enhance_video(payload: RestoreSchema) -> None:
     """
     Main worker: restore segment via fal.ai SeedVR2 (whole segment, one
-    request, no chunking) and merge back into the original video.
+    request, no chunking) and write only restored frames to a new video file.
     """
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy.orm import sessionmaker
@@ -535,13 +477,13 @@ async def enhance_video(payload: RestoreSchema) -> None:
             config = SeedVRFalConfig()  # override fields here from payload if you add them
             client = FalClientCache.get_or_create()
 
-            output = build_output_path(job.source_path, payload.job_id)
-            print(f"Output (merged video): {output}")
+            output = build_output_path(job.source_path, payload.job_id,payload.start_frame, payload.end_frame)
+            print(f"Output (restored segment): {output}")
 
             work_dir = REPO_ROOT / "_worker_tmp" / f"job_{payload.job_id}"
             try:
                 processor = VideoProcessor(client, config, work_dir)
-                final_path = await processor.process_and_merge(
+                final_path = await processor.process_segment(
                     video_path=job.source_path,
                     start_frame=payload.start_frame,
                     end_frame=payload.end_frame,
@@ -550,10 +492,11 @@ async def enhance_video(payload: RestoreSchema) -> None:
             finally:
                 shutil.rmtree(work_dir, ignore_errors=True)
 
-            print(f"Done: merged video saved to {final_path}")
+            print(f"Done: restored segment saved to {final_path}")
 
-            if payload.defect_num == payload.last_defect_num:
-                await lifecycle.complete(str(final_path))
+            redis_client.decr(f"{payload.job_id}")
+            if redis_client.get(f"{payload.job_id}") == "0":
+                redis_client.delete(f"{payload.job_id}")
 
         except Exception:
             await lifecycle.fail()

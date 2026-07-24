@@ -7,8 +7,15 @@ import asyncio
 from app.db.session import engine  
 from app.workers.light_enhancement_worker import route_light_enhancement
 from app.workers.fal_video_restoration_worker import route_seedvr_fal_enhancement
+from redis import Redis
 settings = get_settings()
 
+redis_client = Redis(
+    host="redis",      
+    port=6379,
+    db=0,
+    decode_responses=True,
+)
 reporter = VideoCorruptionReporter(
     classifier_path=str(settings.CLASSIFIER_MODEL_PATH),
     sample_rate=10,
@@ -30,10 +37,8 @@ def _report_video(job_id):
                 _dispatch_defect({
                     "job_id": job_id,
                     "start_frame": int(0),
-                    "end_frame": int(30),
-                    "defect_num": 1,
-                    "last_defect_num": 1,
-                    "defect_type": "blur",
+                    "end_frame": int(15),
+                    "defect_type": "noise",
                 })
     #asyncio.run(_report_video_impl(job_id))
 
@@ -64,17 +69,14 @@ async def _report_video_impl(job_id):
             await job_repo.update_job_status(job_id, JobStatus.RUNNING)
 
             results = reporter.classify_video(job.source_path)
-            total_defects = len(results)
 
             for defect_num, result in enumerate(results, start=1):
                 _dispatch_defect({
                     "job_id": job_id,
                     "start_frame": int(result["start_frame"]),
                     "end_frame": int(result["end_frame"]),
-                    "defect_num": defect_num,
-                    "last_defect_num": total_defects,
-                    "defect_type": result["class"],
                 })
+            redis_client.set(f"{job_id}", len(results))    
 
                 
 

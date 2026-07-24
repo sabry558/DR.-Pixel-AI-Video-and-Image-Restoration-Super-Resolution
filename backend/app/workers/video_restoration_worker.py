@@ -69,8 +69,13 @@ import torch
 from app.services.light_rabbitmq_service import app
 from app.repositories.job_repository import AsyncJobRepository, JobStatus
 from app.workers.workers_schema.restore_schema import RestoreSchema
-
-
+from redis import Redis
+redis_client = Redis(
+    host="redis",      
+    port=6379,
+    db=0,
+    decode_responses=True,
+)
 # =============================================================================
 # DEVICE CONFIGURATION
 # =============================================================================
@@ -656,8 +661,9 @@ async def enhance_video(payload: RestoreSchema) -> None:
 
             print(f"Done: merged video saved to {final_path}")
 
-            if payload.defect_num == payload.last_defect_num:
-                await lifecycle.complete(str(final_path))
+            redis_client.decr(f"{payload.job_id}")
+            if redis_client.get(f"{payload.job_id}") == "0":
+                redis_client.delete(f"{payload.job_id}")
 
         except Exception:
             await lifecycle.fail()
