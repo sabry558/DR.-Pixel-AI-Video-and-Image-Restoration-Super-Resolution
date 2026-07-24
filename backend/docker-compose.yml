@@ -32,16 +32,29 @@ services:
     env_file:
       - ./.env
     ports:
-      - "5672:5672"     
-      - "15672:15672"   
+      - "5672:5672"
+      - "15672:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - api-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
     networks:
       - api-network
 
 volumes:
   pgdata:
   rabbitmq_data:
+  redis_data:
 
 networks:
   api-network:
