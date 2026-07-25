@@ -116,7 +116,6 @@ class VideoColorCorrectionPipeline:
             for frame_idx in corruption_range.indices():
                 self._correct_single_frame(
                     frame_idx=frame_idx,
-                    corruption_type=corruption_range.corruption_type,
                     frames=frames,
                     selector=selector,
                     region_masks=region_masks,
@@ -146,7 +145,6 @@ class VideoColorCorrectionPipeline:
     def _correct_single_frame(
         self,
         frame_idx: int,
-        corruption_type: str,
         frames: Sequence[np.ndarray],
         selector: ReferenceFrameSelector,
         region_masks: Optional[Dict[int, np.ndarray]],
@@ -169,4 +167,4 @@ class VideoColorCorrectionPipeline:
             reference_frames=reference_frames,
             region_mask=mask,
         )
-        result.log_correction(frame_idx, len(reference_frames), corruption_type)
+        result.log_correction(frame_idx, len(reference_frames),corruption_type="unknown" )
