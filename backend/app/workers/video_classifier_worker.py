@@ -11,9 +11,8 @@ from redis import Redis
 settings = get_settings()
 
 redis_client = Redis(
-    host="redis",      
+    host="localhost",
     port=6379,
-    db=0,
     decode_responses=True,
 )
 reporter = VideoCorruptionReporter(
@@ -38,8 +37,17 @@ def _report_video(job_id):
                     "job_id": job_id,
                     "start_frame": int(0),
                     "end_frame": int(15),
+                    "defect_type": "low_light",
+                })
+                _dispatch_defect({
+                    "job_id": job_id,
+                    "start_frame": int(18),
+                    "end_frame": int(25),
                     "defect_type": "noise",
                 })
+                redis_client.set(f"{job_id}", 2)    
+
+
     #asyncio.run(_report_video_impl(job_id))
 
 
