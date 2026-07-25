@@ -52,13 +52,14 @@ from app.repositories.job_repository import AsyncJobRepository, JobStatus
 from app.workers.workers_schema.restore_schema import RestoreSchema
 from app.core.config import get_settings
 from redis import Redis
+from app.workers.merge_and_color_correction_worker import route_merge_video
+
 # =============================================================================
 # PATH CONFIGURATION
 # =============================================================================
 redis_client = Redis(
-    host="redis",      
+    host="localhost",
     port=6379,
-    db=0,
     decode_responses=True,
 )
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -494,9 +495,12 @@ async def enhance_video(payload: RestoreSchema) -> None:
 
             print(f"Done: restored segment saved to {final_path}")
 
-            redis_client.decr(f"{payload.job_id}")
-            if redis_client.get(f"{payload.job_id}") == "0":
+            remaining = redis_client.decr(f"{payload.job_id}")
+            if int(remaining) <= 0:
                 redis_client.delete(f"{payload.job_id}")
+                print(f"All segments restored for job {remaining}, merging...")
+                route_merge_video.delay(payload.job_id, job.source_path)
+
 
         except Exception:
             await lifecycle.fail()

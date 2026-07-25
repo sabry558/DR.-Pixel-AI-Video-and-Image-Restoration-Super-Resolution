@@ -21,7 +21,6 @@ from typing import Any, Dict, Iterator, List
 class CorruptionRange:
     start_frame: int
     end_frame: int
-    corruption_type: str
 
     def indices(self) -> range:
         """Inclusive range of frame indices covered by this corruption."""
@@ -41,7 +40,6 @@ class CorruptionRange:
             return cls(
                 start_frame=int(d["start_frame"]),
                 end_frame=int(d["end_frame"]),
-                corruption_type=str(d.get("type", "unknown")),
             )
         except KeyError as e:
             raise ValueError(
